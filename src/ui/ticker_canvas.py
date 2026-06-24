@@ -37,6 +37,7 @@ class TickerCanvas(QWidget):
         super().__init__(parent)
         self.settings = settings
         self.items: list[HeadlineItem] = []
+        self.staged_items: list[HeadlineItem] = []
         self.rendered_items: list[RenderedItem] = []
         self.offset = 0.0
         self.content_width = 0.0
@@ -69,8 +70,8 @@ class TickerCanvas(QWidget):
         self.update()
 
     def set_headlines(self, items: list[HeadlineItem], highlighted_keys: list[str] | None = None) -> None:
-        self.items = items
-        self.offset = 0.0
+        previous_width = self.content_width + self._wrap_gap() if self.content_width > 0 else 0.0
+        self.items, self.staged_items = self._partition_display_items(items)
         self.hovered_guid = None
         self._layout_key = None
         active_keys = {self._item_key(item) for item in items}
@@ -87,6 +88,12 @@ class TickerCanvas(QWidget):
                 if key in active_keys:
                     self.pending_highlight_keys.add(key)
         self._rebuild_layout()
+        if previous_width <= 0 or not self.items:
+            self.offset = 0.0
+        else:
+            wrap_width = self.content_width + self._wrap_gap()
+            self.offset = self.offset % wrap_width if wrap_width > 0 else 0.0
+        self._release_staged_items_if_ready()
         self.update()
 
     def set_manual_paused(self, paused: bool) -> None:
@@ -112,6 +119,7 @@ class TickerCanvas(QWidget):
         self.last_tick = now
 
         if self.paused or self.content_width <= self.width():
+            self._release_staged_items_if_ready()
             self.update()
             return
 
@@ -120,6 +128,7 @@ class TickerCanvas(QWidget):
         wrap_width = self.content_width + self._wrap_gap()
         if self.offset >= wrap_width:
             self.offset = 0.0
+        self._release_staged_items_if_ready()
         self.update()
 
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -257,7 +266,7 @@ class TickerCanvas(QWidget):
     def _rebuild_layout(self) -> None:
         layout_key = (
             len(self.items),
-            tuple(item.guid for item in self.items),
+            tuple(self._item_key(item) for item in self.items),
             self.width(),
             self.height(),
             self.font().pointSize(),
@@ -309,6 +318,72 @@ class TickerCanvas(QWidget):
         self.rendered_items = rendered
         self.content_width = x
         self._layout_key = layout_key
+
+    def _partition_display_items(
+        self, items: list[HeadlineItem]
+    ) -> tuple[list[HeadlineItem], list[HeadlineItem]]:
+        incoming_by_key = {self._item_key(item): item for item in items}
+        previous_visible_keys = {self._item_key(item) for item in self.items}
+        previous_order = self.items + self.staged_items
+        previous_order_keys = {self._item_key(item) for item in previous_order}
+
+        ordered_items: list[HeadlineItem] = []
+        seen_keys: set[str] = set()
+
+        for item in previous_order:
+            key = self._item_key(item)
+            incoming_item = incoming_by_key.get(key)
+            if incoming_item is None or key in seen_keys:
+                continue
+            ordered_items.append(incoming_item)
+            seen_keys.add(key)
+
+        for item in items:
+            key = self._item_key(item)
+            if key in seen_keys:
+                continue
+            ordered_items.append(item)
+            seen_keys.add(key)
+
+        visible_items: list[HeadlineItem] = []
+        staged_items: list[HeadlineItem] = []
+        for item in ordered_items:
+            key = self._item_key(item)
+            if key in previous_visible_keys:
+                visible_items.append(item)
+                continue
+            if key in previous_order_keys:
+                staged_items.append(item)
+                continue
+            staged_items.append(item)
+
+        if not visible_items and staged_items:
+            return staged_items, []
+
+        return visible_items, staged_items
+
+    def _release_staged_items_if_ready(self) -> None:
+        if not self.staged_items:
+            return
+        if not self.items:
+            self.items = self.staged_items
+            self.staged_items = []
+            self._layout_key = None
+            self._rebuild_layout()
+            return
+        if not self.rendered_items:
+            self._rebuild_layout()
+            if not self.rendered_items:
+                return
+
+        last_visible_rect = self.rendered_items[-1].rect
+        if last_visible_rect.right() - self.offset > self.width():
+            return
+
+        self.items.extend(self.staged_items)
+        self.staged_items = []
+        self._layout_key = None
+        self._rebuild_layout()
 
     def _item_gap(self) -> float:
         return float(self.settings.get("headline_spacing", DEFAULT_ITEM_GAP))
