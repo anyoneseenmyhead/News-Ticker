@@ -1,0 +1,32 @@
+{
+  "monitor_id": "HP ALL-in-One|0|0|1920|1080",
+  "position": "top",
+  "height": 28,
+  "opacity": 0.9,
+  "scroll_speed": 100,
+  "headline_spacing": 26,
+  "font_size": 10,
+  "refresh_interval_minutes": 5,
+  "show_source_label": true,
+  "deduplicate_headlines": true,
+  "pause_on_hover": true,
+  "launch_on_startup": false,
+  "always_on_top": false,
+  "reserve_screen_space": true,
+  "background_color": "#101418",
+  "text_color": "#F5F7FA",
+  "accent_color": "#55007f",
+  "separator_color": "#cba200",
+  "feeds": [
+    {
+      "name": "NPR News",
+      "url": "https://feeds.npr.org/1001/rss.xml",
+      "enabled": true
+    },
+    {
+      "name": "BBC World",
+      "url": "https://feeds.bbci.co.uk/news/world/rss.xml",
+      "enabled": true
+    }
+  ]
+}

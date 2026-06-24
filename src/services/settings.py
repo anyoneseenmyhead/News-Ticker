@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import json
+from copy import deepcopy
+from pathlib import Path
+
+
+DEFAULT_FEEDS = [
+    {"name": "NPR News", "url": "https://feeds.npr.org/1001/rss.xml", "enabled": True},
+    {"name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "enabled": True},
+]
+
+LEGACY_INITIAL_FEEDS = [
+    {"name": "Reuters World", "url": "https://feeds.reuters.com/Reuters/worldNews", "enabled": True},
+    {"name": "AP Top News", "url": "https://apnews.com/hub/ap-top-news?output=rss", "enabled": True},
+    {"name": "NPR News", "url": "https://feeds.npr.org/1001/rss.xml", "enabled": True},
+    {"name": "BBC World", "url": "https://feeds.bbci.co.uk/news/world/rss.xml", "enabled": True},
+]
+
+
+DEFAULT_SETTINGS = {
+    "monitor_id": "primary",
+    "position": "top",
+    "height": 44,
+    "opacity": 0.9,
+    "scroll_speed": 90,
+    "headline_spacing": 8,
+    "font_size": 15,
+    "refresh_interval_minutes": 10,
+    "show_source_label": True,
+    "deduplicate_headlines": True,
+    "pause_on_hover": True,
+    "launch_on_startup": False,
+    "always_on_top": True,
+    "reserve_screen_space": True,
+    "background_color": "#101418",
+    "text_color": "#F5F7FA",
+    "accent_color": "#FF6B35",
+    "separator_color": "#7F8B99",
+    "feeds": deepcopy(DEFAULT_FEEDS),
+}
+
+
+class SettingsService:
+    def __init__(self, app_name: str = "News Ticker") -> None:
+        self.app_name = app_name
+        self.path = Path("data") / "settings.json"
+        self.data = self.load()
+
+    def load(self) -> dict:
+        if not self.path.exists():
+            self.save(deepcopy(DEFAULT_SETTINGS))
+            return deepcopy(DEFAULT_SETTINGS)
+
+        with self.path.open("r", encoding="utf-8") as handle:
+            stored = json.load(handle)
+
+        merged = merge_dicts(deepcopy(DEFAULT_SETTINGS), stored)
+        if merged.get("feeds") == LEGACY_INITIAL_FEEDS:
+            merged["feeds"] = deepcopy(DEFAULT_FEEDS)
+            self.save(merged)
+        return merged
+
+    def save(self, settings: dict) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w", encoding="utf-8") as handle:
+            json.dump(settings, handle, indent=2)
+        self.data = settings
+
+
+def merge_dicts(base: dict, override: dict) -> dict:
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            base[key] = merge_dicts(base[key], value)
+        else:
+            base[key] = value
+    return base
