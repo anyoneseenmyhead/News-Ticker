@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.services.browser import available_browser_options
+
 
 def is_valid_feed_url(value: str) -> bool:
     parsed = urlparse(value.strip())
@@ -144,6 +146,7 @@ class SettingsDialog(QDialog):
         self._settings = deepcopy(settings)
         self.feed_rows: list[FeedRow] = []
         self.monitor_options = self._build_monitor_options()
+        self.browser_options = available_browser_options()
 
         root_layout = QVBoxLayout(self)
 
@@ -188,6 +191,15 @@ class SettingsDialog(QDialog):
         self.refresh_spin.setRange(1, 120)
         self.refresh_spin.setValue(int(settings["refresh_interval_minutes"]))
 
+        self.max_headlines_spin = QSpinBox()
+        self.max_headlines_spin.setRange(10, 500)
+        self.max_headlines_spin.setValue(int(settings.get("max_headlines", 40)))
+
+        self.browser_combo = QComboBox()
+        for option in self.browser_options:
+            self.browser_combo.addItem(option["label"], option["id"])
+        self._set_current_browser(settings.get("browser_preference", "system"))
+
         general_form.addRow("Monitor", self.monitor_combo)
         general_form.addRow("Position", self.position_combo)
         general_form.addRow("Bar Height", self.height_spin)
@@ -196,6 +208,8 @@ class SettingsDialog(QDialog):
         general_form.addRow("Headline Gap", self.spacing_spin)
         general_form.addRow("Font Size", self.font_spin)
         general_form.addRow("Refresh Interval (min)", self.refresh_spin)
+        general_form.addRow("Max Headlines", self.max_headlines_spin)
+        general_form.addRow("Open Links In", self.browser_combo)
 
         toggles_box = QGroupBox("Behavior")
         toggles_layout = QVBoxLayout(toggles_box)
@@ -234,10 +248,17 @@ class SettingsDialog(QDialog):
         self.pulse_strength_spin.setRange(10, 120)
         self.pulse_strength_spin.setValue(int(settings.get("new_headline_pulse_strength", 54)))
 
+        self.pulse_color_button = ColorButton(
+            settings.get("new_headline_pulse_color", settings.get("accent_color", "#AA00FF")),
+            "Select new headline pulse color",
+            self,
+        )
+
         pulse_form.addRow(self.pulse_enabled_checkbox)
         pulse_form.addRow("Duration", self.pulse_duration_spin)
         pulse_form.addRow("Pulse Speed", self.pulse_speed_spin)
         pulse_form.addRow("Glow Strength", self.pulse_strength_spin)
+        pulse_form.addRow("Pulse Color", self.pulse_color_button)
 
         appearance_box = QGroupBox("Appearance")
         appearance_form = QFormLayout(appearance_box)
@@ -324,6 +345,7 @@ class SettingsDialog(QDialog):
             self.pulse_duration_spin.valueChanged,
             self.pulse_speed_spin.valueChanged,
             self.pulse_strength_spin.valueChanged,
+            self.pulse_color_button.color_changed,
             self.background_button.color_changed,
             self.text_button.color_changed,
             self.accent_button.color_changed,
@@ -375,6 +397,13 @@ class SettingsDialog(QDialog):
         self.feed_layout.insertWidget(self.feed_layout.count() - 1, row)
         self._sync_feed_row_controls()
         self._handle_feed_row_changed()
+
+    def _set_current_browser(self, browser_id: str) -> None:
+        for index in range(self.browser_combo.count()):
+            if self.browser_combo.itemData(index) == browser_id:
+                self.browser_combo.setCurrentIndex(index)
+                return
+        self.browser_combo.setCurrentIndex(0)
 
     def _remove_feed_row(self, row: FeedRow) -> None:
         if row not in self.feed_rows:
@@ -448,6 +477,7 @@ class SettingsDialog(QDialog):
         preview["scroll_speed"] = self.speed_spin.value()
         preview["headline_spacing"] = self.spacing_spin.value()
         preview["font_size"] = self.font_spin.value()
+        preview["browser_preference"] = self.browser_combo.currentData()
         preview["show_source_label"] = self.show_source_checkbox.isChecked()
         preview["pause_on_hover"] = self.pause_hover_checkbox.isChecked()
         preview["always_on_top"] = self.always_on_top_checkbox.isChecked()
@@ -456,6 +486,7 @@ class SettingsDialog(QDialog):
         preview["new_headline_pulse_duration"] = self.pulse_duration_spin.value()
         preview["new_headline_pulse_speed"] = self.pulse_speed_spin.value()
         preview["new_headline_pulse_strength"] = self.pulse_strength_spin.value()
+        preview["new_headline_pulse_color"] = self.pulse_color_button.color_value
         preview["background_color"] = self.background_button.color_value
         preview["text_color"] = self.text_button.color_value
         preview["accent_color"] = self.accent_button.color_value
@@ -465,6 +496,7 @@ class SettingsDialog(QDialog):
     def get_settings(self) -> dict:
         self._settings = self.get_preview_settings()
         self._settings["refresh_interval_minutes"] = self.refresh_spin.value()
+        self._settings["max_headlines"] = self.max_headlines_spin.value()
         self._settings["launch_on_startup"] = self.startup_checkbox.isChecked()
         self._settings["feeds"] = [feed for feed in (row.to_dict() for row in self.feed_rows) if feed["url"]]
         return self._settings

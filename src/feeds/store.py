@@ -11,6 +11,11 @@ class FeedStore:
         self.max_items = max_items
         self.items: list[HeadlineItem] = []
 
+    def set_max_items(self, max_items: int) -> list[HeadlineItem]:
+        self.max_items = max(1, int(max_items))
+        self.items = self.items[: self.max_items]
+        return self.items
+
     def merge(self, incoming: list[HeadlineItem]) -> list[HeadlineItem]:
         deduped: OrderedDict[str, HeadlineItem] = OrderedDict()
 

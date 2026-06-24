@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import sin
 from time import perf_counter
-import webbrowser
 
 from PySide6.QtCore import QPoint, QRectF, QSize, QTimer, Qt, Signal
 from PySide6.QtGui import QColor, QBrush, QCursor, QFont, QFontMetrics, QLinearGradient, QMouseEvent, QPainter, QPaintEvent, QPainterPath, QPen
@@ -11,6 +10,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QWidget
 
 from src.feeds.models import HeadlineItem
+from src.services.browser import launch_url
 from src.utils.text import normalize_headline_key
 
 
@@ -143,6 +143,12 @@ class TickerCanvas(QWidget):
             text_color = QColor(self.settings["text_color"])
             accent_color = QColor(self.settings["accent_color"])
             separator_color = QColor(self.settings["separator_color"])
+            pulse_color = QColor(
+                self.settings.get(
+                    "new_headline_pulse_color",
+                    self.settings.get("accent_color", "#AA00FF"),
+                )
+            )
 
             painter.fillRect(self.rect(), background)
             self._draw_frame_lines(painter, accent_color, separator_color)
@@ -184,7 +190,7 @@ class TickerCanvas(QWidget):
                             self._draw_new_item_highlight(
                                 content_painter,
                                 draw_rect,
-                                accent_color,
+                                pulse_color,
                                 highlight_alpha,
                             )
 
@@ -248,7 +254,7 @@ class TickerCanvas(QWidget):
         item = self._item_at(event.position().toPoint())
         if item is None:
             return
-        webbrowser.open(item.url)
+        launch_url(item.url, str(self.settings.get("browser_preference", "system")))
 
     def _item_at(self, point: QPoint) -> HeadlineItem | None:
         if not self.rendered_items:
