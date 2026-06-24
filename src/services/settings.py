@@ -31,6 +31,7 @@ DEFAULT_SETTINGS = {
     "font_size": 10,
     "refresh_interval_minutes": 5,
     "max_headlines": 40,
+    "max_headline_age_hours": 5,
     "browser_preference": "system",
     "show_source_label": True,
     "deduplicate_headlines": True,

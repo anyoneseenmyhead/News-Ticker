@@ -191,6 +191,11 @@ class SettingsDialog(QDialog):
         self.refresh_spin.setRange(1, 120)
         self.refresh_spin.setValue(int(settings["refresh_interval_minutes"]))
 
+        self.max_headline_age_spin = QSpinBox()
+        self.max_headline_age_spin.setRange(1, 168)
+        self.max_headline_age_spin.setValue(int(settings.get("max_headline_age_hours", 5)))
+        self.max_headline_age_spin.setSuffix(" hr")
+
         self.max_headlines_spin = QSpinBox()
         self.max_headlines_spin.setRange(10, 500)
         self.max_headlines_spin.setValue(int(settings.get("max_headlines", 40)))
@@ -208,6 +213,7 @@ class SettingsDialog(QDialog):
         general_form.addRow("Headline Gap", self.spacing_spin)
         general_form.addRow("Font Size", self.font_spin)
         general_form.addRow("Refresh Interval (min)", self.refresh_spin)
+        general_form.addRow("Headline Max Age", self.max_headline_age_spin)
         general_form.addRow("Max Headlines", self.max_headlines_spin)
         general_form.addRow("Open Links In", self.browser_combo)
 
@@ -496,6 +502,7 @@ class SettingsDialog(QDialog):
     def get_settings(self) -> dict:
         self._settings = self.get_preview_settings()
         self._settings["refresh_interval_minutes"] = self.refresh_spin.value()
+        self._settings["max_headline_age_hours"] = self.max_headline_age_spin.value()
         self._settings["max_headlines"] = self.max_headlines_spin.value()
         self._settings["launch_on_startup"] = self.startup_checkbox.isChecked()
         self._settings["feeds"] = [feed for feed in (row.to_dict() for row in self.feed_rows) if feed["url"]]

@@ -32,7 +32,10 @@ class AppController(QObject):
         self.app = app
         self._shutting_down = False
         self.settings = SettingsService()
-        self.feed_store = FeedStore(max_items=int(self.settings.data.get("max_headlines", 40)))
+        self.feed_store = FeedStore(
+            max_items=int(self.settings.data.get("max_headlines", 40)),
+            max_age_hours=int(self.settings.data.get("max_headline_age_hours", 5)),
+        )
         self.autostart = WindowsAutoStart(self.settings.app_name)
         self.window = TickerWindow(self.settings.data)
         self.tray = self._build_tray()
@@ -89,6 +92,7 @@ class AppController(QObject):
 
     def _apply_settings_to_services(self) -> None:
         self.window.apply_settings(self.settings.data)
+        self.feed_store.set_max_age_hours(self.settings.data.get("max_headline_age_hours", 5))
         trimmed_items = self.feed_store.set_max_items(self.settings.data.get("max_headlines", 40))
 
         interval_ms = max(1, int(self.settings.data["refresh_interval_minutes"])) * 60 * 1000
