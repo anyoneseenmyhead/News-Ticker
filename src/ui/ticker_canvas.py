@@ -17,7 +17,9 @@ from src.utils.text import normalize_headline_key
 DEFAULT_ITEM_GAP = 8.0
 DEFAULT_WRAP_GAP = 10.0
 EDGE_FADE_WIDTH = 26.0
-NEW_ITEM_HIGHLIGHT_DURATION = 18.0
+DEFAULT_NEW_ITEM_HIGHLIGHT_DURATION = 18.0
+DEFAULT_NEW_ITEM_PULSE_SPEED = 16.0
+DEFAULT_NEW_ITEM_PULSE_STRENGTH = 54.0
 
 
 @dataclass(slots=True)
@@ -542,14 +544,21 @@ class TickerCanvas(QWidget):
         painter.drawPath(path)
 
     def _activate_highlight_if_visible(self, item_key: str, rect: QRectF, now: float) -> None:
+        if not self.settings.get("new_headline_pulse_enabled", True):
+            self.pending_highlight_keys.discard(item_key)
+            return
         if item_key not in self.pending_highlight_keys:
             return
         if rect.right() < 0 or rect.left() > self.width():
             return
         self.pending_highlight_keys.discard(item_key)
-        self.highlight_deadlines[item_key] = now + NEW_ITEM_HIGHLIGHT_DURATION
+        self.highlight_deadlines[item_key] = now + self._highlight_duration()
 
     def _highlight_alpha(self, item: HeadlineItem, now: float) -> int:
+        if not self.settings.get("new_headline_pulse_enabled", True):
+            self.highlight_deadlines.pop(self._item_key(item), None)
+            return 0
+
         deadline = self.highlight_deadlines.get(self._item_key(item))
         if deadline is None:
             return 0
@@ -558,10 +567,19 @@ class TickerCanvas(QWidget):
             self.highlight_deadlines.pop(self._item_key(item), None)
             return 0
 
-        progress = 1.0 - (remaining / NEW_ITEM_HIGHLIGHT_DURATION)
+        duration = self._highlight_duration()
+        progress = 1.0 - (remaining / duration)
         fade = min(1.0, remaining / 4.5)
-        pulse = 0.65 + (0.55 * ((sin(progress * 16.0) + 1.0) / 2.0))
-        return int(28 + (54 * pulse * fade))
+        pulse_speed = float(self.settings.get("new_headline_pulse_speed", DEFAULT_NEW_ITEM_PULSE_SPEED))
+        pulse_strength = float(self.settings.get("new_headline_pulse_strength", DEFAULT_NEW_ITEM_PULSE_STRENGTH))
+        pulse = 0.65 + (0.55 * ((sin(progress * pulse_speed) + 1.0) / 2.0))
+        return int(28 + (pulse_strength * pulse * fade))
+
+    def _highlight_duration(self) -> float:
+        return max(
+            0.1,
+            float(self.settings.get("new_headline_pulse_duration", DEFAULT_NEW_ITEM_HIGHLIGHT_DURATION)),
+        )
 
     def _item_key(self, item: HeadlineItem) -> str:
         return item.guid.strip() or normalize_headline_key(item.title, item.url)

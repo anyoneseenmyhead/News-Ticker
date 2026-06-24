@@ -216,6 +216,29 @@ class SettingsDialog(QDialog):
         toggles_layout.addWidget(self.reserve_space_checkbox)
         toggles_layout.addWidget(self.startup_checkbox)
 
+        pulse_box = QGroupBox("New Headline Pulse")
+        pulse_form = QFormLayout(pulse_box)
+        self.pulse_enabled_checkbox = QCheckBox("Enable pulse for new headlines")
+        self.pulse_enabled_checkbox.setChecked(settings.get("new_headline_pulse_enabled", True))
+
+        self.pulse_duration_spin = QSpinBox()
+        self.pulse_duration_spin.setRange(1, 60)
+        self.pulse_duration_spin.setValue(int(settings.get("new_headline_pulse_duration", 18)))
+        self.pulse_duration_spin.setSuffix(" s")
+
+        self.pulse_speed_spin = QSpinBox()
+        self.pulse_speed_spin.setRange(2, 40)
+        self.pulse_speed_spin.setValue(int(settings.get("new_headline_pulse_speed", 16)))
+
+        self.pulse_strength_spin = QSpinBox()
+        self.pulse_strength_spin.setRange(10, 120)
+        self.pulse_strength_spin.setValue(int(settings.get("new_headline_pulse_strength", 54)))
+
+        pulse_form.addRow(self.pulse_enabled_checkbox)
+        pulse_form.addRow("Duration", self.pulse_duration_spin)
+        pulse_form.addRow("Pulse Speed", self.pulse_speed_spin)
+        pulse_form.addRow("Glow Strength", self.pulse_strength_spin)
+
         appearance_box = QGroupBox("Appearance")
         appearance_form = QFormLayout(appearance_box)
         self.background_button = ColorButton(settings["background_color"], "Select ticker background color", self)
@@ -228,9 +251,14 @@ class SettingsDialog(QDialog):
         appearance_form.addRow("Source Badges", self.accent_button)
         appearance_form.addRow("Dividers and Borders", self.separator_button)
 
+        side_column = QVBoxLayout()
+        side_column.addWidget(toggles_box)
+        side_column.addWidget(pulse_box)
+        side_column.addStretch(1)
+
         top_row = QHBoxLayout()
         top_row.addWidget(general_box, 1)
-        top_row.addWidget(toggles_box, 1)
+        top_row.addLayout(side_column, 1)
         top_row.addWidget(appearance_box, 1)
 
         feeds_box = QGroupBox("Feeds")
@@ -276,6 +304,7 @@ class SettingsDialog(QDialog):
         root_layout.addWidget(buttons)
 
         self._connect_preview_inputs()
+        self._sync_pulse_controls()
         self._emit_preview()
 
     def _connect_preview_inputs(self) -> None:
@@ -291,6 +320,10 @@ class SettingsDialog(QDialog):
             self.pause_hover_checkbox.toggled,
             self.always_on_top_checkbox.toggled,
             self.reserve_space_checkbox.toggled,
+            self.pulse_enabled_checkbox.toggled,
+            self.pulse_duration_spin.valueChanged,
+            self.pulse_speed_spin.valueChanged,
+            self.pulse_strength_spin.valueChanged,
             self.background_button.color_changed,
             self.text_button.color_changed,
             self.accent_button.color_changed,
@@ -298,9 +331,16 @@ class SettingsDialog(QDialog):
         ]
         for signal in preview_sources:
             signal.connect(self._emit_preview)
+        self.pulse_enabled_checkbox.toggled.connect(self._sync_pulse_controls)
 
     def _emit_preview(self, *_args: object) -> None:
         self.preview_requested.emit(self.get_preview_settings())
+
+    def _sync_pulse_controls(self) -> None:
+        enabled = self.pulse_enabled_checkbox.isChecked()
+        self.pulse_duration_spin.setEnabled(enabled)
+        self.pulse_speed_spin.setEnabled(enabled)
+        self.pulse_strength_spin.setEnabled(enabled)
 
     def _build_monitor_options(self) -> list[dict]:
         options = [{"id": "primary", "label": "Primary Display"}]
@@ -412,6 +452,10 @@ class SettingsDialog(QDialog):
         preview["pause_on_hover"] = self.pause_hover_checkbox.isChecked()
         preview["always_on_top"] = self.always_on_top_checkbox.isChecked()
         preview["reserve_screen_space"] = self.reserve_space_checkbox.isChecked()
+        preview["new_headline_pulse_enabled"] = self.pulse_enabled_checkbox.isChecked()
+        preview["new_headline_pulse_duration"] = self.pulse_duration_spin.value()
+        preview["new_headline_pulse_speed"] = self.pulse_speed_spin.value()
+        preview["new_headline_pulse_strength"] = self.pulse_strength_spin.value()
         preview["background_color"] = self.background_button.color_value
         preview["text_color"] = self.text_button.color_value
         preview["accent_color"] = self.accent_button.color_value
