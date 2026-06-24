@@ -8,11 +8,18 @@ try:
 except ImportError:  # pragma: no cover - only relevant outside Windows
     winreg = None
 
+from src.services.paths import app_root
+
 
 class WindowsAutoStart:
     def __init__(self, app_name: str) -> None:
         self.app_name = app_name
-        self.command = f'"{sys.executable}" "{Path.cwd() / "main.py"}"'
+        self.command = self._build_command()
+
+    def _build_command(self) -> str:
+        if getattr(sys, "frozen", False):
+            return f'"{Path(sys.executable).resolve()}"'
+        return f'"{Path(sys.executable).resolve()}" "{app_root() / "main.py"}"'
 
     def enable(self) -> None:
         if winreg is None:

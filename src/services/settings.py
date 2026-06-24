@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
 from copy import deepcopy
 from pathlib import Path
+
+from src.services.paths import user_data_dir, legacy_data_dir
 
 
 DEFAULT_FEEDS = [
@@ -44,10 +47,11 @@ DEFAULT_SETTINGS = {
 class SettingsService:
     def __init__(self, app_name: str = "News Ticker") -> None:
         self.app_name = app_name
-        self.path = Path("data") / "settings.json"
+        self.path = user_data_dir(app_name) / "settings.json"
         self.data = self.load()
 
     def load(self) -> dict:
+        self._migrate_legacy_settings()
         if not self.path.exists():
             self.save(deepcopy(DEFAULT_SETTINGS))
             return deepcopy(DEFAULT_SETTINGS)
@@ -66,6 +70,14 @@ class SettingsService:
         with self.path.open("w", encoding="utf-8") as handle:
             json.dump(settings, handle, indent=2)
         self.data = settings
+
+    def _migrate_legacy_settings(self) -> None:
+        legacy_path = legacy_data_dir() / "settings.json"
+        if self.path.exists() or not legacy_path.exists() or legacy_path == self.path:
+            return
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy_path, self.path)
 
 
 def merge_dicts(base: dict, override: dict) -> dict:

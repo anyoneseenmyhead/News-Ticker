@@ -12,6 +12,7 @@ from src.feeds.fetcher import FeedFetchWorker
 from src.feeds.models import HeadlineItem
 from src.feeds.store import FeedStore
 from src.services.autostart import WindowsAutoStart
+from src.services.paths import user_data_dir
 from src.services.settings import SettingsService
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.ticker_window import TickerWindow
@@ -200,7 +201,7 @@ class AppController(QObject):
 
 
 def _ensure_data_dir() -> None:
-    Path("data").mkdir(exist_ok=True)
+    user_data_dir().mkdir(parents=True, exist_ok=True)
 
 
 def build_tray_icon() -> QIcon:
