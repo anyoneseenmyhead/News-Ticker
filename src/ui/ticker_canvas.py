@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import sin
 from time import perf_counter
 import webbrowser
 
@@ -10,11 +11,13 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QWidget
 
 from src.feeds.models import HeadlineItem
+from src.utils.text import normalize_headline_key
 
 
 DEFAULT_ITEM_GAP = 8.0
 DEFAULT_WRAP_GAP = 10.0
 EDGE_FADE_WIDTH = 26.0
+NEW_ITEM_HIGHLIGHT_DURATION = 18.0
 
 
 @dataclass(slots=True)
@@ -43,6 +46,8 @@ class TickerCanvas(QWidget):
         self.hovered_guid: str | None = None
         self.last_tick = perf_counter()
         self._layout_key: tuple | None = None
+        self.highlight_deadlines: dict[str, float] = {}
+        self.pending_highlight_keys: set[str] = set()
         self.status_kind = "idle"
         self.status_message = ""
 
@@ -63,11 +68,24 @@ class TickerCanvas(QWidget):
         self._layout_key = None
         self.update()
 
-    def set_headlines(self, items: list[HeadlineItem]) -> None:
+    def set_headlines(self, items: list[HeadlineItem], highlighted_keys: list[str] | None = None) -> None:
         self.items = items
         self.offset = 0.0
         self.hovered_guid = None
         self._layout_key = None
+        active_keys = {self._item_key(item) for item in items}
+        self.highlight_deadlines = {
+            key: deadline
+            for key, deadline in self.highlight_deadlines.items()
+            if key in active_keys and deadline > perf_counter()
+        }
+        self.pending_highlight_keys = {
+            key for key in self.pending_highlight_keys if key in active_keys
+        }
+        if highlighted_keys:
+            for key in highlighted_keys:
+                if key in active_keys:
+                    self.pending_highlight_keys.add(key)
         self._rebuild_layout()
         self.update()
 
@@ -126,6 +144,7 @@ class TickerCanvas(QWidget):
             self._rebuild_layout()
             metrics = QFontMetrics(self.font())
             baseline_y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+            frame_now = perf_counter()
             content_layer = QPixmap(self.size())
             content_layer.fill(Qt.GlobalColor.transparent)
             content_painter = QPainter(content_layer)
@@ -146,6 +165,17 @@ class TickerCanvas(QWidget):
                         badge_rect = translated_rect(rendered.badge_rect, x)
                         title_rect = translated_rect(rendered.title_rect, x)
                         separator_x = rendered.separator_x + x
+                        item_key = self._item_key(rendered.item)
+                        self._activate_highlight_if_visible(item_key, draw_rect, frame_now)
+                        highlight_alpha = self._highlight_alpha(rendered.item, frame_now)
+
+                        if highlight_alpha > 0:
+                            self._draw_new_item_highlight(
+                                content_painter,
+                                draw_rect,
+                                accent_color,
+                                highlight_alpha,
+                            )
 
                         if hovered:
                             hover_fill = QColor(text_color)
@@ -415,6 +445,51 @@ class TickerCanvas(QWidget):
         text_x = int(dot_rect.right() + 8.0)
         baseline_y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
         painter.drawText(text_x, baseline_y, label)
+
+    def _draw_new_item_highlight(
+        self,
+        painter: QPainter,
+        rect: QRectF,
+        accent_color: QColor,
+        alpha: int,
+    ) -> None:
+        glow_rect = rect.adjusted(-2.0, 3.0, 2.0, -3.0)
+        fill = QColor(accent_color)
+        fill.setAlpha(alpha)
+        stroke = QColor(lighten(accent_color, 18))
+        stroke.setAlpha(min(255, int(alpha * 2.2)))
+
+        path = QPainterPath()
+        path.addRoundedRect(glow_rect, 8.0, 8.0)
+        painter.fillPath(path, fill)
+        painter.setPen(QPen(stroke, 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+
+    def _activate_highlight_if_visible(self, item_key: str, rect: QRectF, now: float) -> None:
+        if item_key not in self.pending_highlight_keys:
+            return
+        if rect.right() < 0 or rect.left() > self.width():
+            return
+        self.pending_highlight_keys.discard(item_key)
+        self.highlight_deadlines[item_key] = now + NEW_ITEM_HIGHLIGHT_DURATION
+
+    def _highlight_alpha(self, item: HeadlineItem, now: float) -> int:
+        deadline = self.highlight_deadlines.get(self._item_key(item))
+        if deadline is None:
+            return 0
+        remaining = deadline - now
+        if remaining <= 0:
+            self.highlight_deadlines.pop(self._item_key(item), None)
+            return 0
+
+        progress = 1.0 - (remaining / NEW_ITEM_HIGHLIGHT_DURATION)
+        fade = min(1.0, remaining / 4.5)
+        pulse = 0.65 + (0.55 * ((sin(progress * 16.0) + 1.0) / 2.0))
+        return int(28 + (54 * pulse * fade))
+
+    def _item_key(self, item: HeadlineItem) -> str:
+        return item.guid.strip() or normalize_headline_key(item.title, item.url)
 
 
 def translated_rect(rect: QRectF, dx: float) -> QRectF:

@@ -124,8 +124,8 @@ class TickerWindow(QWidget):
         else:
             self.move(geometry.x(), geometry.y())
 
-    def set_headlines(self, items: list[HeadlineItem]) -> None:
-        self.canvas.set_headlines(items)
+    def set_headlines(self, items: list[HeadlineItem], highlighted_keys: list[str] | None = None) -> None:
+        self.canvas.set_headlines(items, highlighted_keys)
 
     def set_manual_paused(self, paused: bool) -> None:
         self.canvas.set_manual_paused(paused)

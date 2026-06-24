@@ -16,6 +16,7 @@ from src.services.paths import user_data_dir
 from src.services.settings import SettingsService
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.ticker_window import TickerWindow
+from src.utils.text import normalize_headline_key
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SOURCE_ICON_PNG = ROOT_DIR / "news-ticker-icon.png"
@@ -24,7 +25,7 @@ GENERATED_ICON_ICO = ROOT_DIR / "assets" / "generated" / "app_icon.ico"
 
 
 class AppController(QObject):
-    headlines_updated = Signal(list)
+    headlines_updated = Signal(list, list)
 
     def __init__(self, app: QApplication) -> None:
         super().__init__()
@@ -114,7 +115,7 @@ class AppController(QObject):
         if not enabled_feeds:
             self.window.set_status_message("No feeds enabled")
             self.window.set_status_state("empty", "No feeds enabled")
-            self.window.set_headlines(self.feed_store.items)
+            self.window.set_headlines(self.feed_store.items, [])
             return
 
         self.window.set_status_message("Refreshing headlines...")
@@ -130,7 +131,13 @@ class AppController(QObject):
         self.refresh_thread.start()
 
     def _handle_refresh_success(self, items: list[HeadlineItem], warnings: list[str]) -> None:
+        existing_keys = {self._headline_key(item) for item in self.feed_store.items}
         merged = self.feed_store.merge(items)
+        highlight_keys = [
+            self._headline_key(item)
+            for item in merged
+            if self._headline_key(item) not in existing_keys
+        ]
         if warnings:
             self.window.set_status_message(
                 f"{len(merged)} headlines loaded. {len(warnings)} feed issue(s). Hover for details.",
@@ -140,7 +147,7 @@ class AppController(QObject):
         else:
             self.window.set_status_message(f"{len(merged)} headlines loaded")
             self.window.set_status_state("ok", f"{len(merged)} headlines loaded")
-        self.headlines_updated.emit(merged)
+        self.headlines_updated.emit(merged, highlight_keys)
 
     def _handle_refresh_failure(self, message: str) -> None:
         if self.feed_store.items:
@@ -149,11 +156,14 @@ class AppController(QObject):
                 message,
             )
             self.window.set_status_state("warning", message)
-            self.window.set_headlines(self.feed_store.items)
+            self.window.set_headlines(self.feed_store.items, [])
             return
 
         self.window.set_status_message("Refresh failed. Hover for details.", message)
         self.window.set_status_state("error", message)
+
+    def _headline_key(self, item: HeadlineItem) -> str:
+        return item.guid.strip() or normalize_headline_key(item.title, item.url)
 
     def _cleanup_refresh_thread(self, *_args: object) -> None:
         if self.refresh_thread is None:
