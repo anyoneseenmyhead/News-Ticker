@@ -16,6 +16,11 @@ from src.services.settings import SettingsService
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.ticker_window import TickerWindow
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+SOURCE_ICON_PNG = ROOT_DIR / "news-ticker-icon.png"
+GENERATED_ICON_PNG = ROOT_DIR / "assets" / "generated" / "app_icon.png"
+GENERATED_ICON_ICO = ROOT_DIR / "assets" / "generated" / "app_icon.ico"
+
 
 class AppController(QObject):
     headlines_updated = Signal(list)
@@ -23,6 +28,7 @@ class AppController(QObject):
     def __init__(self, app: QApplication) -> None:
         super().__init__()
         self.app = app
+        self._shutting_down = False
         self.settings = SettingsService()
         self.feed_store = FeedStore(max_items=100)
         self.autostart = WindowsAutoStart(self.settings.app_name)
@@ -43,7 +49,7 @@ class AppController(QObject):
 
     def _build_tray(self) -> QSystemTrayIcon:
         tray = QSystemTrayIcon(self.app)
-        tray.setIcon(build_tray_icon())
+        tray.setIcon(load_app_icon())
         tray.setToolTip("News Ticker")
         menu = QMenu()
 
@@ -173,9 +179,24 @@ class AppController(QObject):
         self.refresh_feeds()
 
     def shutdown(self) -> None:
+        if self._shutting_down:
+            return
+
+        self._shutting_down = True
         self.refresh_timer.stop()
+
+        if self.refresh_thread is not None:
+            self.refresh_thread.quit()
+            self.refresh_thread.wait(2000)
+            if self.refresh_worker is not None:
+                self.refresh_worker.deleteLater()
+            self.refresh_thread.deleteLater()
+            self.refresh_thread = None
+            self.refresh_worker = None
+
         self.tray.hide()
         self.window.close()
+        self.app.quit()
 
 
 def _ensure_data_dir() -> None:
@@ -198,6 +219,15 @@ def build_tray_icon() -> QIcon:
     return QIcon(pixmap)
 
 
+def load_app_icon() -> QIcon:
+    for icon_path in (SOURCE_ICON_PNG, GENERATED_ICON_ICO, GENERATED_ICON_PNG):
+        if icon_path.exists():
+            icon = QIcon(str(icon_path))
+            if not icon.isNull():
+                return icon
+    return build_tray_icon()
+
+
 def run() -> None:
     _ensure_data_dir()
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -205,6 +235,7 @@ def run() -> None:
     )
     app = QApplication(sys.argv)
     app.setApplicationName("News Ticker")
+    app.setWindowIcon(load_app_icon())
     app.setQuitOnLastWindowClosed(False)
     controller = AppController(app)
     app.aboutToQuit.connect(controller.shutdown)

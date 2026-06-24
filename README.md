@@ -19,10 +19,37 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Development Build Tools
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ## Run
 
 ```bash
 python main.py
+```
+
+## Build Windows Executable
+
+This project includes a Windows packaging path using `PyInstaller`.
+
+```bash
+python build_windows.py
+```
+
+That build script will:
+
+- convert `news-ticker-icon.png` into build-ready icon assets in `assets/generated/`
+- package the app into `dist/NewsTicker/`
+
+The icon conversion step uses `Pillow`, included in `requirements-dev.txt`.
+
+If you want to regenerate the build icon only:
+
+```bash
+python tools/generate_app_icon.py
 ```
 
 ## Project Layout
@@ -37,4 +64,9 @@ src/
   utils/
 data/
 assets/
+  generated/
+tools/
+  generate_app_icon.py
+build_windows.py
+news_ticker.spec
 ```
