@@ -14,6 +14,7 @@ from src.feeds.store import FeedStore
 from src.services.autostart import WindowsAutoStart
 from src.services.paths import user_data_dir
 from src.services.settings import SettingsService
+from src.ui.headline_digest_dialog import HeadlineDigestDialog
 from src.ui.settings_dialog import SettingsDialog
 from src.ui.ticker_window import TickerWindow
 from src.utils.text import normalize_headline_key
@@ -44,9 +45,11 @@ class AppController(QObject):
         self.refresh_timer = QTimer(self)
         self.refresh_timer.timeout.connect(self.refresh_feeds)
         self.headlines_updated.connect(self.window.set_headlines)
+        self.digest_dialog: HeadlineDigestDialog | None = None
 
         self.window.request_open_settings.connect(self.open_settings)
         self.window.request_refresh.connect(self.refresh_feeds)
+        self.window.request_show_digest.connect(self.show_headline_digest)
 
         self._apply_settings_to_services()
         self.window.show()
@@ -70,6 +73,10 @@ class AppController(QObject):
         refresh_action = QAction("Refresh Now", self)
         refresh_action.triggered.connect(self.refresh_feeds)
         menu.addAction(refresh_action)
+
+        digest_action = QAction("Show Headline Digest", self)
+        digest_action.triggered.connect(self.show_headline_digest)
+        menu.addAction(digest_action)
 
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self.open_settings)
@@ -196,6 +203,21 @@ class AppController(QObject):
         self._apply_settings_to_services()
         self.refresh_feeds()
 
+    def show_headline_digest(self) -> None:
+        if self.digest_dialog is not None:
+            self.digest_dialog.close()
+            self.digest_dialog.deleteLater()
+
+        self.digest_dialog = HeadlineDigestDialog(list(self.feed_store.items), self.window)
+        self.digest_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.digest_dialog.destroyed.connect(self._clear_digest_dialog)
+        self.digest_dialog.show()
+        self.digest_dialog.raise_()
+        self.digest_dialog.activateWindow()
+
+    def _clear_digest_dialog(self, *_args: object) -> None:
+        self.digest_dialog = None
+
     def shutdown(self) -> None:
         if self._shutting_down:
             return
@@ -213,6 +235,8 @@ class AppController(QObject):
             self.refresh_worker = None
 
         self.tray.hide()
+        if self.digest_dialog is not None:
+            self.digest_dialog.close()
         self.window.close()
         self.app.quit()
 

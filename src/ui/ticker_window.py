@@ -12,6 +12,7 @@ from src.ui.ticker_canvas import TickerCanvas
 class TickerWindow(QWidget):
     request_open_settings = Signal()
     request_refresh = Signal()
+    request_show_digest = Signal()
 
     def __init__(self, settings: dict) -> None:
         super().__init__()
@@ -158,12 +159,15 @@ class TickerWindow(QWidget):
 
     def contextMenuEvent(self, event) -> None:  # type: ignore[override]
         menu = QMenu(self)
+        digest_action = QAction("Show Headline Digest", self)
+        digest_action.triggered.connect(self.request_show_digest.emit)
         refresh_action = QAction("Refresh Now", self)
         refresh_action.triggered.connect(self.request_refresh.emit)
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self.request_open_settings.emit)
         close_action = QAction("Close Ticker", self)
         close_action.triggered.connect(self.hide)
+        menu.addAction(digest_action)
         menu.addAction(refresh_action)
         menu.addAction(settings_action)
         menu.addAction(close_action)
