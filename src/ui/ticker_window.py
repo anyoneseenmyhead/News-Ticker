@@ -13,6 +13,7 @@ class TickerWindow(QWidget):
     request_open_settings = Signal()
     request_refresh = Signal()
     request_show_digest = Signal()
+    request_show_feed_diagnostics = Signal()
 
     def __init__(self, settings: dict) -> None:
         super().__init__()
@@ -161,6 +162,8 @@ class TickerWindow(QWidget):
         menu = QMenu(self)
         digest_action = QAction("Show Headline Digest", self)
         digest_action.triggered.connect(self.request_show_digest.emit)
+        diagnostics_action = QAction("Show Feed Diagnostics", self)
+        diagnostics_action.triggered.connect(self.request_show_feed_diagnostics.emit)
         refresh_action = QAction("Refresh Now", self)
         refresh_action.triggered.connect(self.request_refresh.emit)
         settings_action = QAction("Settings", self)
@@ -168,6 +171,7 @@ class TickerWindow(QWidget):
         close_action = QAction("Close Ticker", self)
         close_action.triggered.connect(self.hide)
         menu.addAction(digest_action)
+        menu.addAction(diagnostics_action)
         menu.addAction(refresh_action)
         menu.addAction(settings_action)
         menu.addAction(close_action)

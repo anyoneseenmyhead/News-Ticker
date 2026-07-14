@@ -9,10 +9,11 @@ from PySide6.QtGui import QAction, QColor, QGuiApplication, QIcon, QPainter, QPi
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from src.feeds.fetcher import FeedFetchWorker
-from src.feeds.models import HeadlineItem
+from src.feeds.models import FeedDiagnostic, HeadlineItem
 from src.feeds.store import FeedStore
 from src.services.autostart import WindowsAutoStart
 from src.services.paths import user_data_dir
+from src.ui.feed_diagnostics_dialog import FeedDiagnosticsDialog
 from src.services.settings import SettingsService
 from src.ui.headline_digest_dialog import HeadlineDigestDialog
 from src.ui.settings_dialog import SettingsDialog
@@ -23,6 +24,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 SOURCE_ICON_PNG = ROOT_DIR / "news-ticker-icon.png"
 GENERATED_ICON_PNG = ROOT_DIR / "assets" / "generated" / "app_icon.png"
 GENERATED_ICON_ICO = ROOT_DIR / "assets" / "generated" / "app_icon.ico"
+MAX_DIAGNOSTIC_HISTORY = 40
 
 
 class AppController(QObject):
@@ -46,10 +48,13 @@ class AppController(QObject):
         self.refresh_timer.timeout.connect(self.refresh_feeds)
         self.headlines_updated.connect(self.window.set_headlines)
         self.digest_dialog: HeadlineDigestDialog | None = None
+        self.feed_diagnostics_dialog: FeedDiagnosticsDialog | None = None
+        self.feed_diagnostics_history: list[FeedDiagnostic] = []
 
         self.window.request_open_settings.connect(self.open_settings)
         self.window.request_refresh.connect(self.refresh_feeds)
         self.window.request_show_digest.connect(self.show_headline_digest)
+        self.window.request_show_feed_diagnostics.connect(self.show_feed_diagnostics)
 
         self._apply_settings_to_services()
         self.window.show()
@@ -77,6 +82,10 @@ class AppController(QObject):
         digest_action = QAction("Show Headline Digest", self)
         digest_action.triggered.connect(self.show_headline_digest)
         menu.addAction(digest_action)
+
+        diagnostics_action = QAction("Show Feed Diagnostics", self)
+        diagnostics_action.triggered.connect(self.show_feed_diagnostics)
+        menu.addAction(diagnostics_action)
 
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self.open_settings)
@@ -144,7 +153,7 @@ class AppController(QObject):
         self.refresh_worker.failed.connect(self._cleanup_refresh_thread)
         self.refresh_thread.start()
 
-    def _handle_refresh_success(self, items: list[HeadlineItem], warnings: list[str]) -> None:
+    def _handle_refresh_success(self, items: list[HeadlineItem], diagnostics: list[FeedDiagnostic]) -> None:
         existing_keys = {self._headline_key(item) for item in self.feed_store.items}
         merged = self.feed_store.merge(items)
         highlight_keys = [
@@ -152,18 +161,22 @@ class AppController(QObject):
             for item in merged
             if self._headline_key(item) not in existing_keys
         ]
-        if warnings:
+        self._remember_diagnostics(diagnostics)
+        issues = [diagnostic for diagnostic in diagnostics if diagnostic.result != "success"]
+        issue_text = "\n".join(self._format_diagnostic_detail(diagnostic) for diagnostic in issues)
+        if issues:
             self.window.set_status_message(
-                f"{len(merged)} headlines loaded. {len(warnings)} feed issue(s). Hover for details.",
-                "\n".join(warnings),
+                f"{len(merged)} headlines loaded. {len(issues)} feed issue(s). Hover for details.",
+                issue_text,
             )
-            self.window.set_status_state("warning", "\n".join(warnings))
+            self.window.set_status_state("warning", issue_text)
         else:
             self.window.set_status_message(f"{len(merged)} headlines loaded")
             self.window.set_status_state("ok", f"{len(merged)} headlines loaded")
         self.headlines_updated.emit(merged, highlight_keys)
 
-    def _handle_refresh_failure(self, message: str) -> None:
+    def _handle_refresh_failure(self, message: str, diagnostics: list[FeedDiagnostic]) -> None:
+        self._remember_diagnostics(diagnostics)
         if self.feed_store.items:
             self.window.set_status_message(
                 f"Refresh failed, showing cached headlines. Hover for details.",
@@ -215,8 +228,38 @@ class AppController(QObject):
         self.digest_dialog.raise_()
         self.digest_dialog.activateWindow()
 
+    def show_feed_diagnostics(self) -> None:
+        if self.feed_diagnostics_dialog is not None:
+            self.feed_diagnostics_dialog.close()
+            self.feed_diagnostics_dialog.deleteLater()
+
+        self.feed_diagnostics_dialog = FeedDiagnosticsDialog(list(self.feed_diagnostics_history), self.window)
+        self.feed_diagnostics_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        self.feed_diagnostics_dialog.destroyed.connect(self._clear_feed_diagnostics_dialog)
+        self.feed_diagnostics_dialog.show()
+        self.feed_diagnostics_dialog.raise_()
+        self.feed_diagnostics_dialog.activateWindow()
+
     def _clear_digest_dialog(self, *_args: object) -> None:
         self.digest_dialog = None
+
+    def _clear_feed_diagnostics_dialog(self, *_args: object) -> None:
+        self.feed_diagnostics_dialog = None
+
+    def _remember_diagnostics(self, diagnostics: list[FeedDiagnostic]) -> None:
+        self.feed_diagnostics_history = (diagnostics + self.feed_diagnostics_history)[:MAX_DIAGNOSTIC_HISTORY]
+        if self.feed_diagnostics_dialog is not None:
+            self.feed_diagnostics_dialog.set_diagnostics(self.feed_diagnostics_history)
+
+    def _format_diagnostic_detail(self, diagnostic: FeedDiagnostic) -> str:
+        parts = [diagnostic.feed_name, diagnostic.stage]
+        if diagnostic.http_status is not None:
+            parts.append(f"HTTP {diagnostic.http_status}")
+        if diagnostic.error_message:
+            parts.append(diagnostic.error_message)
+        elif diagnostic.item_count == 0:
+            parts.append("no headlines returned")
+        return ": ".join([parts[0], " | ".join(parts[1:])])
 
     def shutdown(self) -> None:
         if self._shutting_down:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+from time import perf_counter
 from typing import Iterable
 from urllib.error import URLError
 from urllib.parse import urlparse
@@ -10,7 +11,7 @@ import xml.etree.ElementTree as ET
 
 from PySide6.QtCore import QObject, Signal
 
-from src.feeds.models import HeadlineItem
+from src.feeds.models import FeedDiagnostic, HeadlineItem
 
 
 ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
@@ -18,7 +19,7 @@ ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
 
 class FeedFetchWorker(QObject):
     finished = Signal(list, list)
-    failed = Signal(str)
+    failed = Signal(str, list)
 
     def __init__(self, feeds: Iterable[dict]) -> None:
         super().__init__()
@@ -27,26 +28,38 @@ class FeedFetchWorker(QObject):
     def run(self) -> None:
         try:
             items: list[HeadlineItem] = []
-            errors: list[str] = []
+            diagnostics: list[FeedDiagnostic] = []
             for feed in self.feeds:
-                try:
-                    feed_items = fetch_feed(feed)
-                except Exception as exc:
-                    errors.append(str(exc))
-                    continue
+                feed_items, diagnostic = fetch_feed_with_diagnostics(feed)
+                diagnostics.append(diagnostic)
                 if not feed_items:
-                    errors.append(f"{feed['name']}: no headlines returned")
                     continue
                 items.extend(feed_items)
             if not items:
-                self.failed.emit("; ".join(errors) if errors else "no headlines returned from enabled feeds")
+                messages = [format_diagnostic_message(diagnostic) for diagnostic in diagnostics]
+                self.failed.emit(
+                    "; ".join(message for message in messages if message)
+                    if messages
+                    else "no headlines returned from enabled feeds"
+                    ,
+                    diagnostics,
+                )
                 return
-            self.finished.emit(items, errors)
+            self.finished.emit(items, diagnostics)
         except Exception as exc:  # pragma: no cover - GUI error surface
-            self.failed.emit(str(exc))
+            self.failed.emit(str(exc), [])
 
 
 def fetch_feed(feed: dict) -> list[HeadlineItem]:
+    items, diagnostic = fetch_feed_with_diagnostics(feed)
+    if diagnostic.result == "error":
+        raise RuntimeError(format_diagnostic_message(diagnostic))
+    return items
+
+
+def fetch_feed_with_diagnostics(feed: dict) -> tuple[list[HeadlineItem], FeedDiagnostic]:
+    started_at = datetime.now(timezone.utc)
+    start_clock = perf_counter()
     request = Request(
         feed["url"],
         headers={
@@ -57,16 +70,88 @@ def fetch_feed(feed: dict) -> list[HeadlineItem]:
     try:
         with urlopen(request, timeout=10) as response:
             payload = response.read()
+            http_status = response.getcode() if hasattr(response, "getcode") else None
+            headers = getattr(response, "headers", None)
+            content_type = headers.get_content_type() if headers and hasattr(headers, "get_content_type") else ""
+            final_url = getattr(response, "url", "") or feed["url"]
     except URLError as exc:
-        raise RuntimeError(f"{feed['name']}: {exc.reason}") from exc
+        return [], build_diagnostic(
+            feed,
+            started_at=started_at,
+            start_clock=start_clock,
+            result="error",
+            stage="request",
+            error_message=str(exc.reason),
+            exception_type=type(exc).__name__,
+        )
 
-    root = ET.fromstring(payload)
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        return [], build_diagnostic(
+            feed,
+            started_at=started_at,
+            start_clock=start_clock,
+            result="error",
+            stage="parse",
+            http_status=http_status,
+            content_type=content_type,
+            bytes_read=len(payload),
+            final_url=final_url,
+            error_message=str(exc),
+            exception_type=type(exc).__name__,
+            payload_preview=preview_payload(payload),
+        )
+
     tag = strip_namespace(root.tag)
     if tag == "rss":
-        return parse_rss(root, feed)
-    if tag == "feed":
-        return parse_atom(root, feed)
-    raise RuntimeError(f"{feed['name']}: unsupported feed format")
+        items = parse_rss(root, feed)
+    elif tag == "feed":
+        items = parse_atom(root, feed)
+    else:
+        return [], build_diagnostic(
+            feed,
+            started_at=started_at,
+            start_clock=start_clock,
+            result="error",
+            stage="format",
+            http_status=http_status,
+            content_type=content_type,
+            bytes_read=len(payload),
+            root_tag=tag,
+            final_url=final_url,
+            error_message="unsupported feed format",
+            payload_preview=preview_payload(payload),
+        )
+
+    if not items:
+        return [], build_diagnostic(
+            feed,
+            started_at=started_at,
+            start_clock=start_clock,
+            result="warning",
+            stage="empty",
+            http_status=http_status,
+            content_type=content_type,
+            bytes_read=len(payload),
+            root_tag=tag,
+            final_url=final_url,
+            error_message="no headlines returned",
+        )
+
+    return items, build_diagnostic(
+        feed,
+        started_at=started_at,
+        start_clock=start_clock,
+        result="success",
+        stage="success",
+        item_count=len(items),
+        http_status=http_status,
+        content_type=content_type,
+        bytes_read=len(payload),
+        root_tag=tag,
+        final_url=final_url,
+    )
 
 
 def parse_rss(root: ET.Element, feed: dict) -> list[HeadlineItem]:
@@ -151,3 +236,49 @@ def text_or_default(value: str | None, default: str) -> str:
 
 def source_key(url: str) -> str:
     return urlparse(url).netloc.lower()
+
+
+def build_diagnostic(
+    feed: dict,
+    *,
+    started_at: datetime,
+    start_clock: float,
+    result: str,
+    stage: str,
+    item_count: int = 0,
+    http_status: int | None = None,
+    content_type: str = "",
+    bytes_read: int = 0,
+    root_tag: str = "",
+    final_url: str = "",
+    error_message: str = "",
+    exception_type: str = "",
+    payload_preview: str = "",
+) -> FeedDiagnostic:
+    elapsed_ms = max(0, int((perf_counter() - start_clock) * 1000))
+    return FeedDiagnostic(
+        feed_name=feed["name"],
+        feed_url=feed["url"],
+        fetched_at=started_at,
+        elapsed_ms=elapsed_ms,
+        result=result,
+        stage=stage,
+        item_count=item_count,
+        http_status=http_status,
+        content_type=content_type,
+        bytes_read=bytes_read,
+        root_tag=root_tag,
+        final_url=final_url,
+        error_message=error_message,
+        exception_type=exception_type,
+        payload_preview=payload_preview,
+    )
+
+
+def preview_payload(payload: bytes, limit: int = 500) -> str:
+    return payload[:limit].decode("utf-8", errors="replace").strip()
+
+
+def format_diagnostic_message(diagnostic: FeedDiagnostic) -> str:
+    message = diagnostic.error_message or "no headlines returned"
+    return f"{diagnostic.feed_name}: {message}"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import timezone
+from email.message import Message
 from urllib.error import URLError
 
 import pytest
@@ -42,8 +43,16 @@ ATOM_SAMPLE = b"""
 @contextmanager
 def fake_response(payload: bytes):
     class Response:
+        def __init__(self) -> None:
+            self.headers = Message()
+            self.headers["Content-Type"] = "application/rss+xml"
+            self.url = "https://example.com/final.xml"
+
         def read(self) -> bytes:
             return payload
+
+        def getcode(self) -> int:
+            return 200
 
     yield Response()
 
@@ -103,19 +112,71 @@ def test_feed_fetch_worker_emits_partial_success_with_warnings(monkeypatch: pyte
 
     def fake_fetch_feed(feed: dict):
         if feed["name"] == "Good Feed":
-            return [result_item]
+            return [result_item], fetcher.FeedDiagnostic(
+                feed_name=feed["name"],
+                feed_url=feed["url"],
+                fetched_at=fetcher.datetime.now(fetcher.timezone.utc),
+                elapsed_ms=12,
+                result="success",
+                stage="success",
+                item_count=1,
+            )
         if feed["name"] == "Empty Feed":
-            return []
-        raise RuntimeError("Bad Feed exploded")
+            return [], fetcher.FeedDiagnostic(
+                feed_name=feed["name"],
+                feed_url=feed["url"],
+                fetched_at=fetcher.datetime.now(fetcher.timezone.utc),
+                elapsed_ms=8,
+                result="warning",
+                stage="empty",
+                error_message="no headlines returned",
+            )
+        return [], fetcher.FeedDiagnostic(
+            feed_name=feed["name"],
+            feed_url=feed["url"],
+            fetched_at=fetcher.datetime.now(fetcher.timezone.utc),
+            elapsed_ms=5,
+            result="error",
+            stage="request",
+            error_message="Bad Feed exploded",
+        )
 
-    monkeypatch.setattr(fetcher, "fetch_feed", fake_fetch_feed)
+    monkeypatch.setattr(fetcher, "fetch_feed_with_diagnostics", fake_fetch_feed)
     worker = fetcher.FeedFetchWorker([feed_ok, feed_empty, feed_bad])
     events: dict[str, object] = {}
-    worker.finished.connect(lambda items, warnings: events.update({"items": items, "warnings": warnings}))
-    worker.failed.connect(lambda message: events.update({"failed": message}))
+    worker.finished.connect(lambda items, diagnostics: events.update({"items": items, "diagnostics": diagnostics}))
+    worker.failed.connect(lambda message, diagnostics: events.update({"failed": message, "failed_diagnostics": diagnostics}))
 
     worker.run()
 
     assert "failed" not in events
     assert events["items"] == [result_item]
-    assert events["warnings"] == ["Empty Feed: no headlines returned", "Bad Feed exploded"]
+    diagnostics = events["diagnostics"]
+    assert [diagnostic.result for diagnostic in diagnostics] == ["success", "warning", "error"]
+
+
+def test_fetch_feed_with_diagnostics_captures_response_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    feed = {"name": "Example RSS", "url": "https://example.com/rss.xml"}
+    monkeypatch.setattr(fetcher, "urlopen", lambda request, timeout=10: fake_response(RSS_SAMPLE))
+
+    items, diagnostic = fetcher.fetch_feed_with_diagnostics(feed)
+
+    assert len(items) == 2
+    assert diagnostic.result == "success"
+    assert diagnostic.http_status == 200
+    assert diagnostic.content_type == "application/rss+xml"
+    assert diagnostic.root_tag == "rss"
+    assert diagnostic.item_count == 2
+    assert diagnostic.final_url == "https://example.com/final.xml"
+
+
+def test_fetch_feed_with_diagnostics_records_parse_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    feed = {"name": "Broken Feed", "url": "https://example.com/broken.xml"}
+    monkeypatch.setattr(fetcher, "urlopen", lambda request, timeout=10: fake_response(b"<rss><channel>"))
+
+    items, diagnostic = fetcher.fetch_feed_with_diagnostics(feed)
+
+    assert items == []
+    assert diagnostic.result == "error"
+    assert diagnostic.stage == "parse"
+    assert diagnostic.payload_preview == "<rss><channel>"
